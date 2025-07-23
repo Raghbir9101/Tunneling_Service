@@ -28,8 +28,10 @@ class TunnelClient {
     
     this.socket.on('tunnel-registered', (data) => {
       if (data.success) {
-        console.log(`✅ Tunnel active: https://${this.subdomain}.your-domain.com`);
-        console.log(`Local service: ${this.localUrl}`);
+        console.log(`✅ Tunnel active!`);
+        console.log(`🌐 Public URL: http://${this.vpsUrl.replace('http://', '').replace('https://', '')}/${this.subdomain}/`);
+        console.log(`🏠 Local service: ${this.localUrl}`);
+        console.log(`📝 Usage: Access your service at /{tunnel-name}/path`);
       } else {
         console.error('Failed to register tunnel:', data.error);
       }
@@ -113,9 +115,9 @@ class TunnelClient {
 
 // Configuration
 const config = {
-  vpsUrl: `http://${process.env.IP}:${process.env.PORT}`, // Replace with your VPS IP
+  vpsUrl: `http://${process.env.IP}:${process.env.PORT}`, // Replace with your VPS IP:PORT
   localPort: 7860, // Port where your AI model is running
-  subdomain: 'my-ai-model' // Choose your subdomain
+  subdomain: 'my-ai-model' // Choose your tunnel name (used in path: /my-ai-model/)
 };
 
 // Create and start tunnel

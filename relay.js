@@ -33,7 +33,7 @@ io.on('connection', (socket) => {
       socket: socket
     });
     
-    console.log(`Tunnel registered: ${subdomain} -> ${socket.id}`);
+    console.log(`✅ Tunnel registered: ${subdomain} -> ${socket.id}`);
     socket.emit('tunnel-registered', { success: true, subdomain });
   });
   
@@ -87,38 +87,47 @@ io.on('connection', (socket) => {
 // Catch-all route to handle tunnel requests
 app.all('*', (req, res) => {
   const host = req.get('host');
-  let subdomain;
+  let tunnelName;
+  let targetPath;
   
-  // Handle localhost testing - use first available tunnel
-  if (host && (host.startsWith('localhost') || host.startsWith('127.0.0.1'))) {
-    const availableTunnels = Array.from(tunnels.keys());
-    subdomain = availableTunnels.length > 0 ? availableTunnels[0] : null;
-    console.log(`Localhost request, using tunnel: ${subdomain}`);
-  } else {
-    // Production subdomain extraction
-    subdomain = host ? host.split('.')[0] : null;
-  }
+  // Extract tunnel name from path: /tunnel-name/rest/of/path
+  const pathParts = req.path.split('/').filter(part => part.length > 0);
   
-  console.log(`Request for: ${host}${req.path} -> tunnel: ${subdomain}`);
-  
-  if (!subdomain || !tunnels.has(subdomain)) {
-    return res.status(404).json({ 
-      error: 'Tunnel not found',
-      message: `No tunnel registered for ${host}. Available tunnels: ${Array.from(tunnels.keys()).join(', ')}`
+  if (pathParts.length === 0) {
+    // Root path - show available tunnels
+    return res.json({
+      message: 'Tunneling Service',
+      available_tunnels: Array.from(tunnels.keys()),
+      usage: 'Use /{tunnel-name}/path/to/endpoint',
+      examples: Array.from(tunnels.keys()).map(name => `${req.protocol}://${host}/${name}/`)
     });
   }
   
-  const tunnel = tunnels.get(subdomain);
+  tunnelName = pathParts[0];
+  targetPath = '/' + pathParts.slice(1).join('/');
+  
+  console.log(`Request for: ${host}${req.path} -> tunnel: ${tunnelName}, target: ${targetPath}`);
+  
+  if (!tunnels.has(tunnelName)) {
+    return res.status(404).json({ 
+      error: 'Tunnel not found',
+      message: `No tunnel registered with name '${tunnelName}'`,
+      available_tunnels: Array.from(tunnels.keys()),
+      usage: 'Use /{tunnel-name}/path/to/endpoint'
+    });
+  }
+  
+  const tunnel = tunnels.get(tunnelName);
   const requestId = uuidv4();
   
   // Store the response object for later use
   pendingRequests.set(requestId, { res });
   
-  // Prepare request data
+  // Prepare request data with modified path
   const requestData = {
     requestId,
     method: req.method,
-    path: req.path,
+    path: targetPath,
     query: req.query,
     headers: req.headers,
     body: req.body
@@ -138,17 +147,19 @@ app.all('*', (req, res) => {
   }, 30000); // 30 second timeout
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
+// Health check endpoint - before the catch-all route
+app.get('/__health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    tunnels: Array.from(tunnels.keys()),
+    active_tunnels: Array.from(tunnels.keys()),
+    tunnel_count: tunnels.size,
     timestamp: new Date().toISOString()
   });
 });
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`VPS Relay Server running on port ${PORT}`);
-  console.log(`Health check: http://${process.env.IP}:${PORT}/health`);
+  console.log(`🚀 VPS Relay Server running on port ${PORT}`);
+  console.log(`📊 Health check: http://${process.env.IP}:${PORT}/__health`);
+  console.log(`🔗 Tunnel access: http://${process.env.IP}:${PORT}/{tunnel-name}/`);
 });
