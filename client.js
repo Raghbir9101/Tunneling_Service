@@ -79,20 +79,79 @@ class TunnelClient {
           host: undefined
         },
         data: body,
-        timeout: 25000, // 25 second timeout
-        validateStatus: () => true // Accept all status codes
+        validateStatus: () => true, // Accept all status codes
+        responseType: 'stream' // Enable streaming
       };
       
-      // Make request to local AI model
+      // Make request to local service
       const response = await axios(config);
       
-      // Send response back to VPS
-      this.socket.emit('request-response', {
-        requestId,
-        statusCode: response.status,
-        headers: response.headers,
-        body: response.data
-      });
+      // Check if response should be streamed
+      const contentType = response.headers['content-type'] || '';
+      const isStreamingResponse = contentType.includes('text/event-stream') || 
+                                contentType.includes('application/x-ndjson') ||
+                                contentType.includes('text/plain') && response.headers['transfer-encoding'] === 'chunked';
+      
+      if (isStreamingResponse) {
+        console.log('Handling streaming response');
+        
+        // Send stream start event
+        this.socket.emit('stream-start', {
+          requestId,
+          statusCode: response.status,
+          headers: response.headers
+        });
+        
+        // Handle streaming data
+        response.data.on('data', (chunk) => {
+          this.socket.emit('stream-chunk', {
+            requestId,
+            chunk: chunk.toString()
+          });
+        });
+        
+        response.data.on('end', () => {
+          console.log('Stream ended');
+          this.socket.emit('stream-end', {
+            requestId
+          });
+        });
+        
+        response.data.on('error', (error) => {
+          console.error('Stream error:', error);
+          this.socket.emit('stream-error', {
+            requestId,
+            error: error.message
+          });
+        });
+        
+      } else {
+        // Handle regular (non-streaming) response
+        let responseData = '';
+        response.data.on('data', (chunk) => {
+          responseData += chunk;
+        });
+        
+        response.data.on('end', () => {
+          // Try to parse as JSON if possible, otherwise send as string
+          let body = responseData;
+          try {
+            if (contentType.includes('application/json')) {
+              body = JSON.parse(responseData);
+            }
+          } catch (e) {
+            // Keep as string if JSON parsing fails
+          }
+          
+          // Send response back to VPS
+          this.socket.emit('request-response', {
+            requestId,
+            statusCode: response.status,
+            headers: response.headers,
+            body: body
+          });
+        });
+      }
       
     } catch (error) {
       console.error('Error handling request:', error.message);
@@ -115,8 +174,8 @@ class TunnelClient {
 
 // Configuration
 const config = {
-  vpsUrl: `http://${process.env.IP}:${process.env.PORT}`, // Replace with your VPS IP:PORT
-  localPort: 7860, // Port where your AI model is running
+  vpsUrl: `https://${process.env.IP}:${process.env.PORT}`, // Replace with your VPS IP:PORT
+  localPort: 1234, // Port where your AI model is running
   subdomain: 'my-ai-model' // Choose your tunnel name (used in path: /my-ai-model/)
 };
 

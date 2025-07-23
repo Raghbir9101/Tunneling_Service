@@ -69,6 +69,72 @@ io.on('connection', (socket) => {
       pendingRequests.delete(requestId);
     }
   });
+
+  // Handle streaming responses
+  socket.on('stream-start', (data) => {
+    const { requestId, statusCode, headers } = data;
+    
+    if (pendingRequests.has(requestId)) {
+      const { res } = pendingRequests.get(requestId);
+      
+      // Set headers for streaming
+      if (headers) {
+        Object.keys(headers).forEach(key => {
+          res.set(key, headers[key]);
+        });
+      }
+      
+      res.status(statusCode || 200);
+      
+      // Mark as streaming response
+      pendingRequests.set(requestId, { res, isStreaming: true });
+      
+      console.log(`Started streaming response for request ${requestId}`);
+    }
+  });
+
+  socket.on('stream-chunk', (data) => {
+    const { requestId, chunk } = data;
+    
+    if (pendingRequests.has(requestId)) {
+      const { res, isStreaming } = pendingRequests.get(requestId);
+      
+      if (isStreaming && !res.headersSent) {
+        res.write(chunk);
+      } else if (isStreaming) {
+        res.write(chunk);
+      }
+    }
+  });
+
+  socket.on('stream-end', (data) => {
+    const { requestId } = data;
+    
+    if (pendingRequests.has(requestId)) {
+      const { res, isStreaming } = pendingRequests.get(requestId);
+      
+      if (isStreaming) {
+        res.end();
+        console.log(`Ended streaming response for request ${requestId}`);
+      }
+      
+      pendingRequests.delete(requestId);
+    }
+  });
+
+  socket.on('stream-error', (data) => {
+    const { requestId, error } = data;
+    
+    if (pendingRequests.has(requestId)) {
+      const { res } = pendingRequests.get(requestId);
+      
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Streaming error: ' + error });
+      }
+      
+      pendingRequests.delete(requestId);
+    }
+  });
   
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
