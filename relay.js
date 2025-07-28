@@ -2,9 +2,12 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
+
 require('dotenv').config();
+
 const app = express();
 const server = createServer(app);
+
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -42,7 +45,12 @@ io.on('connection', (socket) => {
     const { requestId, statusCode, headers, body, error } = data;
     
     if (pendingRequests.has(requestId)) {
-      const { res } = pendingRequests.get(requestId);
+      const { res, timeoutId } = pendingRequests.get(requestId);
+      
+      // Clear timeout for completed requests
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       
       if (error) {
         res.status(500).json({ error: 'Internal server error' });
@@ -75,7 +83,12 @@ io.on('connection', (socket) => {
     const { requestId, statusCode, headers } = data;
     
     if (pendingRequests.has(requestId)) {
-      const { res } = pendingRequests.get(requestId);
+      const { res, timeoutId } = pendingRequests.get(requestId);
+      
+      // Clear the timeout for streaming responses since they can run indefinitely
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       
       // Set headers for streaming
       if (headers) {
@@ -86,7 +99,7 @@ io.on('connection', (socket) => {
       
       res.status(statusCode || 200);
       
-      // Mark as streaming response
+      // Mark as streaming response (remove timeoutId since it's cleared)
       pendingRequests.set(requestId, { res, isStreaming: true });
       
       console.log(`Started streaming response for request ${requestId}`);
@@ -126,7 +139,12 @@ io.on('connection', (socket) => {
     const { requestId, error } = data;
     
     if (pendingRequests.has(requestId)) {
-      const { res } = pendingRequests.get(requestId);
+      const { res, timeoutId } = pendingRequests.get(requestId);
+      
+      // Clear timeout for errored streams
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       
       if (!res.headersSent) {
         res.status(500).json({ error: 'Streaming error: ' + error });
@@ -186,8 +204,18 @@ app.all('*', (req, res) => {
   const tunnel = tunnels.get(tunnelName);
   const requestId = uuidv4();
   
-  // Store the response object for later use
-  pendingRequests.set(requestId, { res });
+  // Set timeout for request
+  const timeoutId = setTimeout(() => {
+    if (pendingRequests.has(requestId)) {
+      pendingRequests.delete(requestId);
+      if (!res.headersSent) {
+        res.status(504).json({ error: 'Gateway timeout' });
+      }
+    }
+  }, 30000); // 30 second timeout
+  
+  // Store the response object and timeout ID for later use
+  pendingRequests.set(requestId, { res, timeoutId });
   
   // Prepare request data with modified path
   const requestData = {
@@ -201,16 +229,6 @@ app.all('*', (req, res) => {
   
   // Forward request to local server
   tunnel.socket.emit('http-request', requestData);
-  
-  // Set timeout for request
-  setTimeout(() => {
-    if (pendingRequests.has(requestId)) {
-      pendingRequests.delete(requestId);
-      if (!res.headersSent) {
-        res.status(504).json({ error: 'Gateway timeout' });
-      }
-    }
-  }, 30000); // 30 second timeout
 });
 
 // Health check endpoint - before the catch-all route

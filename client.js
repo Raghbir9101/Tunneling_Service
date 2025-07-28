@@ -18,7 +18,14 @@ class TunnelClient {
     
     this.socket = io(this.vpsUrl, {
       transports: ['websocket'],
-      upgrade: false
+      upgrade: false,
+      timeout: 60000, // 60 second connection timeout
+      pingTimeout: 60000, // 60 seconds to wait for pong
+      pingInterval: 25000, // Send ping every 25 seconds
+      maxHttpBufferSize: 1e8, // 100MB buffer for large responses
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5
     });
     
     this.socket.on('connect', () => {
@@ -80,7 +87,12 @@ class TunnelClient {
         },
         data: body,
         validateStatus: () => true, // Accept all status codes
-        responseType: 'stream' // Enable streaming
+        responseType: 'stream', // Enable streaming
+        timeout: 0, // No timeout for streaming requests
+        maxRedirects: 5,
+        // Keep connection alive for streaming
+        httpAgent: new (require('http').Agent)({ keepAlive: true }),
+        httpsAgent: new (require('https').Agent)({ keepAlive: true })
       };
       
       // Make request to local service
